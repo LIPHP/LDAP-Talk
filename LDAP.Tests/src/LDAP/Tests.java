@@ -4,7 +4,6 @@
 package LDAP;
 
 import java.io.IOException;
-import java.lang.NoSuchMethodException;
 
 /**
  * @author justin.dearing
