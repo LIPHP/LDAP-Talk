@@ -4,9 +4,13 @@
 package LDAP;
 
 import java.io.IOException;
+import java.nio.Buffer;
+import java.util.Hashtable;
+import javax.naming.*;
+import javax.naming.directory.*;
 
 /**
- * @author justin.dearing
+ * @author Justin Dearing
  *
  */
 public class Tests {
@@ -67,26 +71,47 @@ public class Tests {
 		
 		{
 			char l = '\0';
-			while (l != '\n')
+			while (l != '\n' && l != '\r')
 			{
 				l = (char)System.in.read();
-				ldapPassword += l;		
+				ldapPassword += l;
 			}
+			ldapPassword = ldapPassword.replaceAll("[\\r\\n]", "");
 		}
-		System.out.println("Ldap password: " + ldapPassword);
+		//System.out.println("Ldap password: " + ldapPassword);
 		
+		try {
+			activeDirectoryTest(ldapUrl, ldapUserName, ldapPassword);
+		}
+		catch (Exception ex){
+			System.err.println("Error occured: " + ex.getMessage());
+		}
 	}
 	
 	
 	/**
-	 * Logs into Active Directory and gets the logded in users group info.
+	 * Logs into Active Directory and gets the authenticated user's group membership info.
 	 * @param ldapUrl The ldap url of the Active Directory Domain controller.
 	 * @param userName The user name to authenticate to the active directory server as.
 	 * @param password The password to login to Active Directory with.
+	 * @throws NamingException 
 	 */
-	private static void activeDirectoryTest(String ldapUrl, String userName, String password) throws NoSuchMethodException
+	private static void activeDirectoryTest(String ldapUrl, String userName, String password) throws NamingException
 	{
-		throw new NoSuchMethodException("LDAP.Tests.activeDirectoryTest() has yet to be written.");
+		Hashtable<String, String> env = new Hashtable<String, String>();
+		env.put(Context.INITIAL_CONTEXT_FACTORY,"com.sun.jndi.ldap.LdapCtxFactory");
+		env.put(Context.PROVIDER_URL, ldapUrl);
+		env.put(Context.SECURITY_AUTHENTICATION, "simple");		// 'simple' = username + password
+		env.put(Context.SECURITY_PRINCIPAL, userName);			// add the full user DN in active directories case the user@domain form is acceptable. 
+		env.put(Context.SECURITY_CREDENTIALS, password);
+		DirContext ctx = new InitialDirContext(env);
+		
+		//StringBuilder sb = new StringBuilder();
+		//sb.append("(&(userPrincipalName=");
+		//sb.append(userName);
+		//sb.Append(")(objectClass=user))");
+		//ctx.search(name, filter, cons)  //("distinguishedName", "(&(member=CN=Lance Robinson,CN=Users,DC=JUNGLE)(objectcategory=group))", cons)
+		// (&(member=CN=Lance Robinson,CN=Users,DC=JUNGLE)(objectcategory=group))
 	}
 	
 
