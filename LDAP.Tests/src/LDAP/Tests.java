@@ -4,8 +4,8 @@
 package LDAP;
 
 import java.io.IOException;
-import java.nio.Buffer;
 import java.util.Hashtable;
+import java.util.regex.*;
 import javax.naming.*;
 import javax.naming.directory.*;
 
@@ -62,10 +62,12 @@ public class Tests {
 		}
 		
 		String ldapUrl = String.format("ldap://%s:389", domainController);
+		String ldapBaseDN = "dc=" + domain.replaceAll("\\.", ",dc=");
 		String ldapUserName = String.format("%s@%s", systemUserName, domain);
 		String ldapPassword = "";
 		
 		System.out.println("Ldap server URL: " + ldapUrl);
+		System.out.println("Ldap base dn: " + ldapBaseDN);
 		System.out.println("Ldap login name: " + ldapUserName);
 		System.out.println("Enter your AD password: ");
 		
@@ -80,27 +82,30 @@ public class Tests {
 		}
 		//System.out.println("Ldap password: " + ldapPassword);
 		
+		//*		
 		try {
-			activeDirectoryTest(ldapUrl, ldapUserName, ldapPassword);
+			activeDirectoryTest(ldapUrl, ldapBaseDN, ldapUserName, ldapPassword);
 		}
 		catch (Exception ex){
 			System.err.println("Error occured: " + ex.getMessage());
 		}
+		//*/
 	}
 	
 	
 	/**
 	 * Logs into Active Directory and gets the authenticated user's group membership info.
 	 * @param ldapUrl The ldap url of the Active Directory Domain controller.
+	 * @param baseDN The root dn of the AD domain you authenticate against.
 	 * @param userName The user name to authenticate to the active directory server as.
 	 * @param password The password to login to Active Directory with.
 	 * @throws NamingException 
 	 */
-	private static void activeDirectoryTest(String ldapUrl, String userName, String password) throws NamingException
+	private static void activeDirectoryTest(String ldapUrl, String baseDN, String userName, String password) throws NamingException
 	{
 		Hashtable<String, String> env = new Hashtable<String, String>();
 		env.put(Context.INITIAL_CONTEXT_FACTORY,"com.sun.jndi.ldap.LdapCtxFactory");
-		env.put(Context.PROVIDER_URL, ldapUrl);
+		env.put(Context.PROVIDER_URL, ldapUrl + '/' + baseDN);
 		env.put(Context.SECURITY_AUTHENTICATION, "simple");		// 'simple' = username + password
 		env.put(Context.SECURITY_PRINCIPAL, userName);			// add the full user DN in active directories case the user@domain form is acceptable. 
 		env.put(Context.SECURITY_CREDENTIALS, password);
