@@ -4,8 +4,8 @@
 package LDAP;
 
 import java.io.IOException;
-import java.util.Hashtable;
-import java.util.regex.*;
+import java.net.*;
+import java.util.*;
 import javax.naming.*;
 import javax.naming.directory.*;
 
@@ -46,8 +46,13 @@ public class Tests {
 		// and then you need to escape it out for the regex parser. 
 		if(domainController != null)
 		{
-			// It seems that if we login via the RUNAS command the envirormental
-			// variable LOGONSERVER does not get set.
+			/*
+			 * 
+			 * It seems that if we login via the RUNAS command the envirormental
+			 * variable LOGONSERVER does not get set.
+			 * However, if it is present, and we cannot bind to LDAP on
+			 * ldap://domain:3389 we try ldap://domainController:389
+			 */ 
 			domainController = domainController.replaceFirst("\\\\\\\\", "");
 			System.out.println("Domain controller: " + domainController);
 		}		
@@ -61,12 +66,10 @@ public class Tests {
 			return;
 		}
 		
-		String ldapUrl = String.format("ldap://%s:389", domainController);
 		String ldapBaseDN = "dc=" + domain.replaceAll("\\.", ",dc=");
 		String ldapUserName = String.format("%s@%s", systemUserName, domain);
 		String ldapPassword = "";
 		
-		System.out.println("Ldap server URL: " + ldapUrl);
 		System.out.println("Ldap base dn: " + ldapBaseDN);
 		System.out.println("Ldap login name: " + ldapUserName);
 		System.out.println("Enter your AD password: ");
@@ -80,11 +83,11 @@ public class Tests {
 			}
 			ldapPassword = ldapPassword.replaceAll("[\\r\\n]", "");
 		}
-		//System.out.println("Ldap password: " + ldapPassword);
-		
+				
 		//*		
 		try {
-			activeDirectoryTest(ldapUrl, ldapBaseDN, ldapUserName, ldapPassword);
+			String [] ldapHosts = new String[] {domain, domainController};
+			activeDirectoryTest(ldapHosts, ldapBaseDN, ldapUserName, ldapPassword);
 		}
 		catch (Exception ex){
 			System.err.println("Error occured: " + ex.getMessage());
@@ -95,29 +98,206 @@ public class Tests {
 	
 	/**
 	 * Logs into Active Directory and gets the authenticated user's group membership info.
-	 * @param ldapUrl The ldap url of the Active Directory Domain controller.
+	 * Found some of this code in the sun forums.
+	 * @see http://forums.sun.com/thread.jspa?messageID=3012764
+	 * @param ldapServers A lost of potential LDAP servers for the active directory.
 	 * @param baseDN The root dn of the AD domain you authenticate against.
 	 * @param userName The user name to authenticate to the active directory server as.
 	 * @param password The password to login to Active Directory with.
 	 * @throws NamingException 
 	 */
-	private static void activeDirectoryTest(String ldapUrl, String baseDN, String userName, String password) throws NamingException
+	private static void activeDirectoryTest(String[] ldapServers, String baseDN, String userName, String password) throws NamingException
 	{
+		// HashTable mapping group DNs to groupNames
+		Hashtable<String, String> groups = new Hashtable<String, String>();
+		
+		try {
+			//Create the initial directory context
+			DirContext ctx = getLdapConnection(ldapServers, userName, password);
+			
+			//Create the search controls 		
+			SearchControls searchCtls = new SearchControls();
+		
+			//Specify the search scope
+			searchCtls.setSearchScope(SearchControls.SUBTREE_SCOPE);
+ 
+			//specify the LDAP search filter			
+			String searchFilter;
+			{
+				// There is no particular reason go out of our way to limit the scope of this StringBuilder
+				StringBuilder sb = new StringBuilder();
+				sb.append("(&(objectClass=user)(userPrincipalName=");
+				sb.append(userName);
+				sb.append("))");
+				searchFilter = sb.toString();
+			}
+			
+			//initialize counter to total the group members
+			int totalResults = 0;
+ 
+			//Specify the attributes to return
+			String returnedAtts[]={"memberOf"};
+			searchCtls.setReturningAttributes(returnedAtts);
+		
+			//Search for objects using the filter
+			NamingEnumeration answer = ctx.search(baseDN, searchFilter, searchCtls);
+			
+			//Loop through the search results
+			while (answer.hasMoreElements()) {
+				SearchResult sr = (SearchResult)answer.next();
+ 
+				System.out.println(">>>" + sr.getName());
+ 
+				//Print out the groups
+ 
+				Attributes attrs = sr.getAttributes();
+				if (attrs != null) {
+ 
+					try
+					{
+						for (NamingEnumeration ae = attrs.getAll();ae.hasMore();) {
+							Attribute attr = (Attribute)ae.next();
+							for (NamingEnumeration e = attr.getAll();e.hasMore();totalResults++)
+							{
+								String dn = e.next().toString();
+								String cn = groupDN2CN(ctx, dn);
+								if (cn == null) { cn = "unknown"; }
+								groups.put(dn, cn);
+							}
+						}
+					}	 
+					catch (NamingException e)
+					{
+						System.err.println("Problem listing membership: " + e);
+					}
+				
+				}
+			}
+ 
+			System.out.println("Total groups: " + totalResults);
+			ctx.close();
+		}
+		catch (NamingException ex)	{
+			Throwable innerEx = ex.getRootCause();
+			if (innerEx instanceof UnknownHostException)
+			{
+				System.err.println("Host not found " + innerEx.getMessage() + '.');
+			}
+			else if(innerEx instanceof ConnectException)
+			{
+				System.err.println("Error connecting to " + innerEx.getMessage());
+			}
+			else if(innerEx instanceof AuthenticationException)
+			{
+				System.err.println("Authen " + innerEx.getMessage());
+			}
+			else
+			{
+				System.err.println("NamingException occured: " + ex);
+			}
+		}
+		
+		for(Enumeration<String> DNs = groups.keys(); DNs.hasMoreElements(); )
+		{
+			String dn = DNs.nextElement();
+			String cn = groups.get(dn);
+			System.out.println("[" + cn + "] " + dn);
+		}
+	}
+	
+	
+	/**
+	 * 
+	 * @param ldapServers an array of hostnames to attempt to connect to via ldap. 
+	 * The first server that is successfully authenticated against is used.
+	 * @param userName The username to authenticate to the ldap server as.
+	 * @param password The password to use in authenticating to the ldap server.
+	 * @return
+	 * @throws NamingException 
+	 */
+	private static DirContext getLdapConnection(String[] ldapServers, String userName, String password) throws NamingException 
+	{
+		DirContext ctx;
 		Hashtable<String, String> env = new Hashtable<String, String>();
+		
 		env.put(Context.INITIAL_CONTEXT_FACTORY,"com.sun.jndi.ldap.LdapCtxFactory");
-		env.put(Context.PROVIDER_URL, ldapUrl + '/' + baseDN);
 		env.put(Context.SECURITY_AUTHENTICATION, "simple");		// 'simple' = username + password
 		env.put(Context.SECURITY_PRINCIPAL, userName);			// add the full user DN in active directories case the user@domain form is acceptable. 
 		env.put(Context.SECURITY_CREDENTIALS, password);
-		DirContext ctx = new InitialDirContext(env);
 		
-		//StringBuilder sb = new StringBuilder();
-		//sb.append("(&(userPrincipalName=");
-		//sb.append(userName);
-		//sb.Append(")(objectClass=user))");
-		//ctx.search(name, filter, cons)  //("distinguishedName", "(&(member=CN=Lance Robinson,CN=Users,DC=JUNGLE)(objectcategory=group))", cons)
-		// (&(member=CN=Lance Robinson,CN=Users,DC=JUNGLE)(objectcategory=group))
+		for(String ldapServer:ldapServers)
+		{
+			String ldapUrl = String.format("ldap://%s:389", ldapServer);
+			env.put(Context.PROVIDER_URL, ldapUrl);
+			
+			try {
+				ctx = new InitialDirContext(env);
+				if (ctx != null) { return ctx; }
+			}
+			catch (NamingException ex)
+			{
+				System.err.printf(Locale.getDefault(), "Cannot connect to %s. Error: %s", ldapServer, ex.getMessage());
+			}
+		}
+		// If we made it hear die
+		throw new NamingException("Could not connect to any LDAP servers.");
 	}
+
 	
+	
+	/**
+	 * Queries the binded DirContext for the Cannonical Name of the distinguishedName.
+	 * Basically, this is meant to transform the "LDAP name" of a group to its "Windows Name"
+	 * @param ctx A Dircontext that is properly binded to an ldap server.
+	 * @param distinguishedName The Fully qualified name of a group.
+	 */
+	private static String groupDN2CN (DirContext ctx, String distinguishedName)
+	{
+		// We only want the cn attribute
+		SearchControls searchCtls = new SearchControls();
+		searchCtls.setSearchScope(SearchControls.SUBTREE_SCOPE);
+		String returnedAtts[]={"cn"};
+		searchCtls.setReturningAttributes(returnedAtts);
+		
+		String searchFilter;
+		{
+			// There is no particular reason go out of our way to limit the scope of this StringBuilder
+			StringBuilder sb = new StringBuilder();
+			sb.append("(&(objectClass=group)(distinguishedname=");
+			sb.append(distinguishedName);
+			sb.append("))");
+			searchFilter = sb.toString();
+		}
+		try {
+			NamingEnumeration answer = ctx.search(distinguishedName, searchFilter, searchCtls);
+			String ret = null;
+			
+			//We should only get one result
+			if (answer.hasMoreElements()) {
+				SearchResult sr = (SearchResult)answer.next();
+ 
+				 
+				Attributes attrs = sr.getAttributes();
+				if (attrs != null) {
+ 
+					// We only need the first part of each for loop. Hence the break statements.
+					for (NamingEnumeration ae = attrs.getAll();ae.hasMore();) {
+						Attribute attr = (Attribute)ae.next();
+						for (NamingEnumeration e = attr.getAll();e.hasMore();)
+						{
+							ret = e.next().toString();
+							break;
+						}
+						break;
+					}
+				}
+			}
+			return ret;
+		}
+		catch (NamingException ex)	{
+			System.err.println("NamingException occured: " + ex);
+			return null;
+		}
+	}
 
 }
