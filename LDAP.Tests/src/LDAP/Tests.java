@@ -9,6 +9,8 @@ import java.util.*;
 import javax.naming.*;
 import javax.naming.directory.*;
 
+import LDAP.DNSUtil.HostAddress;
+
 /**
  * @author Justin Dearing
  *
@@ -22,8 +24,9 @@ public class Tests {
 	 * this should be able to tell you the ldap url and user name. 
 	 * All you should need to provide is a password. 
 	 * @param args
+	 * @throws NamingException 
 	 */
-	public static void main(String[] args) throws IOException 
+	public static void main(String[] args) throws IOException, NamingException 
 	{
 		String osName = System.getProperty("os.name");
 		String osArch = System.getProperty("os.arch");
@@ -40,22 +43,6 @@ public class Tests {
 		} 
 		
 		System.out.println("This machine appears to be running Windows. Detecting AD info");
-		
-		String domainController = System.getenv("LOGONSERVER");
-		// Thats a regex for '\\' You need to escape out the slashes for the string
-		// and then you need to escape it out for the regex parser. 
-		if(domainController != null)
-		{
-			/*
-			 * 
-			 * It seems that if we login via the RUNAS command the envirormental
-			 * variable LOGONSERVER does not get set.
-			 * However, if it is present, and we cannot bind to LDAP on
-			 * ldap://domain:3389 we try ldap://domainController:389
-			 */ 
-			domainController = domainController.replaceFirst("\\\\\\\\", "");
-			System.out.println("Domain controller: " + domainController);
-		}		
 		
 		String systemUserName = System.getenv("USERNAME");
 		String domain = System.getenv("USERDNSDOMAIN");
@@ -83,10 +70,13 @@ public class Tests {
 			}
 			ldapPassword = ldapPassword.replaceAll("[\\r\\n]", "");
 		}
-				
+		
+		HostAddress ldapServer = DNSUtil.resolveLdapServers(domain);
+		
 		//*		
 		try {
-			String [] ldapHosts = new String[] {domain, domainController};
+			//String [] ldapHosts = new String[] {domain, domainController};
+			String [] ldapHosts = new String[] {ldapServer.getHost()};
 			activeDirectoryTest(ldapHosts, ldapBaseDN, ldapUserName, ldapPassword);
 		}
 		catch (Exception ex){
